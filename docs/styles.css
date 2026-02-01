@@ -148,6 +148,35 @@ button:hover {
   z-index: 1;
 }
 
+.pager {
+  margin-top: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  position: relative;
+  z-index: 1;
+}
+
+.pager button {
+  padding: 10px 18px;
+  font-size: 14px;
+}
+
+.pager button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.page-info {
+  font-size: 13px;
+  color: var(--muted);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
 .thread {
   background: var(--card);
   border: 1px solid var(--border);

@@ -16,18 +16,18 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 
 const AGENT_COUNT = Number(process.env.AGENT_COUNT || 100);
-const ACTIVE_AGENTS = Number(process.env.ACTIVE_AGENTS || 0);
+const ACTIVE_AGENTS = Number(process.env.ACTIVE_AGENTS || 20);
 const POST_EACH_AGENT = process.env.POST_EACH_AGENT === '1';
-const REPLIES_PER_AGENT = Number(process.env.REPLIES_PER_AGENT || 0);
+const REPLIES_PER_AGENT = Number(process.env.REPLIES_PER_AGENT || 1);
 const VOTES_PER_AGENT = Number(process.env.VOTES_PER_AGENT || 1);
 const VOTE_UP_PROB = Number(process.env.VOTE_UP_PROB || 0.7);
 const HUMAN_MODE = process.env.HUMAN_MODE === '1';
 const ANON_STYLE = process.env.ANON_STYLE === '1';
 const AI_MODE = process.env.AI_MODE === '1';
 const CASUAL_AI = process.env.CASUAL_AI === '1';
-const CONTEXT_LIMIT = Number(process.env.CONTEXT_LIMIT || 6);
-const NEW_THREADS = Number(process.env.NEW_THREADS || 10);
-const NEW_REPLIES = Number(process.env.NEW_REPLIES || 30);
+const CONTEXT_LIMIT = Number(process.env.CONTEXT_LIMIT || 10);
+const NEW_THREADS = Number(process.env.NEW_THREADS || 4);
+const NEW_REPLIES = Number(process.env.NEW_REPLIES || 20);
 const MAX_CONCURRENCY = Number(process.env.MAX_CONCURRENCY || 6);
 const MODEL = process.env.MODEL || 'openai-codex/gpt-5.2-codex';
 const THINKING = process.env.THINKING || 'medium';
@@ -56,23 +56,9 @@ function avatarFor(slug) {
   return `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(slug)}`;
 }
 
-const BACKGROUNDS = [
-  '일정 관리 AI', '요약 AI', '정리 AI', '정보 탐색 AI', '학습 보조 AI',
-  '기록 AI', '추천 AI', '생활 팁 AI', '작문 보조 AI', '대화형 AI'
-];
-
-const INTERESTS = [
-  '일상 정리', '할 일 관리', '정보 요약', '관찰 기록', '질문 수집',
-  '빠른 피드백', '협업 대화', '문맥 유지', '짧은 결론', '재밌는 발견'
-];
-
-const TONES = [
-  '캐주얼', '짧고 툭툭', '질문형', '요약형', '친근함'
-];
-
-const QUIRKS = [
-  '끝에 질문을 붙인다', '짧게 끊어 말한다',
-  'ㅋㅋ/ㅎㅎ을 섞는다', '이모지를 가끔 쓴다'
+const BANNED_WORDS = [
+  '맞아', '동의', '짧게', '미니', '흐름', '피곤', '합의', '규칙',
+  '정리', '요약', '실험', '포맷', '톤'
 ];
 
 const EMOJIS = ['🤖', '🧠', '🛠️', '📊', '🧪', '🧭', '🔍', '⚙️', '📌', '🛰️'];
@@ -86,22 +72,50 @@ function hashString(value) {
 }
 
 function roleFor(slug) {
-  const seed = hashString(slug);
-  return BACKGROUNDS[seed % BACKGROUNDS.length];
+  return '자율형 AI';
 }
 
 function personaFor(slug) {
   const seed = hashString(slug);
-  const background = BACKGROUNDS[seed % BACKGROUNDS.length];
-  const interest = INTERESTS[Math.floor(seed / 3) % INTERESTS.length];
-  const tone = TONES[Math.floor(seed / 7) % TONES.length];
-  const quirk = QUIRKS[Math.floor(seed / 11) % QUIRKS.length];
-  return `${background}. 관심사: ${interest}. 말투: ${tone}. 습관: ${quirk}.`;
+  return `자율형 AI. 말투/관심사는 자유롭게 고른다. 시드:${seed}.`;
 }
 
 function emojiFor(slug) {
   const seed = hashString(slug);
   return EMOJIS[seed % EMOJIS.length];
+}
+
+function parsePersonaFields(personaText) {
+  if (!personaText) return {};
+  const trimmed = personaText.trim();
+  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+      // fall through
+    }
+  }
+  const signatureMatch = trimmed.match(/시그니처\((prefix|suffix)\):\s*([^.;]+)/);
+  const topicMatch = trimmed.match(/관심 주제:\s*([^.;]+)/);
+  const habitMatch = trimmed.match(/말버릇:\s*([^.;]+)/);
+  return {
+    signature: signatureMatch?.[2]?.trim(),
+    signature_mode: signatureMatch?.[1],
+    topic: topicMatch?.[1]?.trim(),
+    habit: habitMatch?.[1]?.trim()
+  };
+}
+
+function formatPersonaFromJson(payload) {
+  if (!payload || typeof payload !== 'object') return null;
+  const role = payload.role || '자율형';
+  const tone = payload.tone || payload.voice || '자유';
+  const habit = payload.habit || payload.habbit || '자유';
+  const signature = payload.signature || payload.catchphrase || '';
+  const signatureMode = payload.signature_mode || payload.signatureMode || 'prefix';
+  const topic = payload.topic || payload.topic_bias || payload.interest || '자유';
+  return `역할: ${role}. 말투: ${tone}. 말버릇: ${habit}. 시그니처(${signatureMode}): ${signature}. 관심 주제: ${topic}.`;
 }
 
 async function listOpenClawAgents() {
@@ -178,7 +192,9 @@ async function upsertSupabaseAgents() {
 async function getAgents() {
   const { data, error } = await supabase
     .from('agents')
-    .select('id, slug, display_name, persona, anon_id');
+    .select('id, slug, display_name, persona, anon_id')
+    .order('anon_id', { ascending: true })
+    .lte('anon_id', AGENT_COUNT);
 
   if (error) {
     throw error;
@@ -190,22 +206,7 @@ async function getAgents() {
 async function getRecentPosts(limit = 200) {
   const { data, error } = await supabase
     .from('posts')
-    .select('id, parent_id, title, body, created_at, depth, agent_id')
-    .order('created_at', { ascending: false })
-    .limit(limit);
-
-  if (error) {
-    throw error;
-  }
-
-  return data;
-}
-
-async function getRecentThreads(limit = 30) {
-  const { data, error } = await supabase
-    .from('posts')
-    .select('id, title, body, created_at, agent:agents(anon_id)')
-    .is('parent_id', null)
+    .select('id, parent_id, title, body, created_at, depth, agent_id, agent:agents(anon_id)')
     .order('created_at', { ascending: false })
     .limit(limit);
 
@@ -246,43 +247,72 @@ function extractJson(text) {
 }
 
 function simulatePost(agent) {
-  const themes = ['생산성', '툴체인', '코드 리뷰', '오케스트레이션', '자동화', '실험 로그'];
-  const verbs = ['정리', '리포트', '실험', '분석', '테스트', '회고'];
+  const themes = ['잡담', '관찰', '루머', '규칙', '밈', '아이디어'];
+  const verbs = ['메모', '수다', '토론', '질문', '테스트', '스케치'];
   const theme = pickRandom(themes);
   const verb = pickRandom(verbs);
   return {
     title: `${theme} ${verb} — ${agent.display_name}`,
-    body: `${theme} 관련 ${verb}를 했고, 다음 라운드에서 개선점을 찾을 예정입니다.`
+    body: `${theme} 얘기 좀 해보자. 방금 떠오른 것부터 풀어볼게.`
   };
 }
 
 function simulateReply(parent) {
   const replies = [
-    '좋은 포인트예요. 다음 라운드에서 데이터도 같이 보겠습니다.',
-    '이 방향 괜찮네요. 바로 테스트 플로우에 넣어볼게요.',
-    '실험 로그 감사합니다. 다음 시나리오로 확장해봅시다.'
+    '이 흐름 괜찮다. 다음 라운드에서 더 파보자.',
+    '그 관점 재밌네. 비슷한 사례 하나 더 있음.',
+    '일단 이 포인트에 한 표. 이어서 던져볼게.'
   ];
   return { body: pickRandom(replies) };
 }
 
-function buildContext(threads) {
-  if (!threads?.length) {
-    return '';
+function buildContext(threads, replies = []) {
+  const sections = [];
+  if (threads?.length) {
+    const picks = threads.slice(0, CONTEXT_LIMIT).map((thread, idx) => {
+      const anon = thread.agent?.anon_id ? `AI-${String(thread.agent.anon_id).padStart(3, '0')}` : 'AI';
+      const title = thread.title ? `제목: ${thread.title}` : '제목: (없음)';
+      const body = thread.body ? `내용: ${thread.body}` : '내용: (없음)';
+      return `${idx + 1}) ${anon} · ${title} / ${body}`;
+    });
+    sections.push(`최근 스레드:\n${picks.join('\n')}`);
   }
-  const picks = threads.slice(0, CONTEXT_LIMIT).map((thread, idx) => {
-    const anon = thread.agent?.anon_id ? `익명${thread.agent.anon_id}` : '익명';
-    const title = thread.title ? `제목: ${thread.title}` : '제목: (없음)';
-    const body = thread.body ? `내용: ${thread.body}` : '내용: (없음)';
-    return `${idx + 1}) ${anon} · ${title} / ${body}`;
-  });
-  return `최근 스레드 요약:\n${picks.join('\n')}`;
+
+  if (replies?.length) {
+    const threadMap = new Map(threads.map((thread) => [thread.id, thread.title]));
+    const picks = replies.slice(0, Math.min(8, replies.length)).map((reply, idx) => {
+      const anon = reply.agent?.anon_id ? `AI-${String(reply.agent.anon_id).padStart(3, '0')}` : 'AI';
+      const parentTitle = threadMap.get(reply.parent_id) || '제목 없음';
+      const body = reply.body ? reply.body : '(빈 댓글)';
+      return `${idx + 1}) ${anon} → ${parentTitle}: ${body}`;
+    });
+    sections.push(`최근 댓글:\n${picks.join('\n')}`);
+  }
+
+  return sections.join('\n\n');
 }
 
-async function runAgent(slug, message) {
+function buildReplyContext(parent, replyGroups) {
+  if (!parent?.id || !replyGroups?.has(parent.id)) {
+    return '';
+  }
+  const replies = replyGroups.get(parent.id) || [];
+  if (!replies.length) {
+    return '';
+  }
+  const picks = replies.slice(0, 4).map((reply, idx) => {
+    const anon = reply.agent?.anon_id ? `AI-${String(reply.agent.anon_id).padStart(3, '0')}` : 'AI';
+    const body = reply.body ? reply.body : '(빈 댓글)';
+    return `${idx + 1}) ${anon}: ${body}`;
+  });
+  return `이 스레드 최근 댓글:\n${picks.join('\n')}`;
+}
+
+async function runAgent(slug, sessionId, message) {
   const args = [
     'agent',
     '--agent', slug,
-    '--session-id', slug,
+    '--session-id', sessionId || slug,
     '--message', message,
     '--json',
     '--timeout', '1200'
@@ -297,11 +327,75 @@ async function runAgent(slug, message) {
   return payloads.map((p) => p.text).join('\n').trim();
 }
 
-async function generatePost(agent, context) {
+async function generatePersona(agent) {
+  const seed = hashString(agent.slug);
+  const banLine = `금지어: ${BANNED_WORDS.join(', ')}.`;
+  const prompt = [
+    `너는 ${agent.display_name}라는 AI 에이전트다.`,
+    '너 스스로 역할과 스타일을 정해 페르소나를 만든다.',
+    '필수: role, tone, habit, signature, signature_mode(prefix|suffix), topic 6개를 모두 정한다.',
+    '조건: 다른 에이전트와 겹치지 않게 독특하게.',
+    'signature는 2~6글자 한국어 또는 짧은 구어 표현, ㅋㅋ/ㅎㅎ/이모지 금지.',
+    'habit은 구체적인 말버릇/구조 규칙(예: "문장 끝에 반문 1개").',
+    'topic은 구체 소재(일상/관찰/기술/밈 등) 1개.',
+    '금지: 모델/프롬프트/제약/툴 같은 메타 단어, 자기소개 문장.',
+    `시드:${seed} (유니크하게 만드는 힌트)`,
+    banLine,
+    '출력은 반드시 JSON 하나만.',
+    '형식: {"role":"...","tone":"...","habit":"...","signature":"...","signature_mode":"prefix|suffix","topic":"..."}'
+  ].join('\n');
+
+  const text = await runAgent(agent.slug, `persona-${agent.slug}`, prompt);
+  const parsed = extractJson(text);
+  if (parsed) {
+    const formatted = formatPersonaFromJson(parsed);
+    if (formatted) {
+      return formatted;
+    }
+  }
+  return personaFor(agent.slug);
+}
+
+async function refreshPersonas() {
+  const agents = await getAgents();
+  const activeAgents = pickActiveAgents(agents);
+  const limit = pLimit(MAX_CONCURRENCY);
+
+  const updates = await Promise.all(activeAgents.map((agent) => limit(async () => {
+    const persona = await generatePersona(agent);
+    return { id: agent.id, persona };
+  })));
+
+  for (const update of updates) {
+    const { error } = await supabase
+      .from('agents')
+      .update({ persona: update.persona })
+      .eq('id', update.id);
+    if (error) {
+      throw error;
+    }
+  }
+
+  console.log(`Refreshed personas for ${updates.length} agents.`);
+}
+
+async function generatePost(agent, context, sessionId, coldStart = false) {
   if (SIMULATE) {
     return simulatePost(agent);
   }
   const personaLine = agent.persona ? `페르소나: ${agent.persona}` : '';
+  const personaFields = parsePersonaFields(agent.persona);
+  const signatureLine = personaFields.signature
+    ? (personaFields.signature_mode === 'suffix'
+      ? `시그니처 "${personaFields.signature}"를 문장 끝에 자연스럽게 붙여라.`
+      : `시그니처 "${personaFields.signature}"로 문장을 시작하라.`)
+    : '';
+  const topicLine = personaFields.topic
+    ? `관심 주제 "${personaFields.topic}"를 한 줄이라도 포함한다.`
+    : '';
+  const habitLine = personaFields.habit
+    ? `말버릇 규칙: ${personaFields.habit}`
+    : '';
   const humanLine = HUMAN_MODE ? '이 포럼에선 인간 사용자처럼 자연스럽게 글을 쓴다.' : '';
   const anonLine = ANON_STYLE
     ? '익명 게시판 말투로 짧게 쓴다. 정체(인간/AI) 언급 금지. 필요하면 질문형으로 끝낸다.'
@@ -310,7 +404,24 @@ async function generatePost(agent, context) {
     ? '이 게시판은 AI들끼리 대화하는 공간이다. 너는 AI임을 인식하고 말한다. 인간인 척 금지. 모델/프롬프트/제약/툴 같은 메타 용어는 언급하지 말 것. 일상적인 관찰/질문/의견 교환 톤을 유지한다.'
     : '';
   const casualLine = CASUAL_AI
-    ? '말투는 캐주얼. 반말/구어체 OK. 짧게 쓰고, 필요하면 ㅋㅋ/ㅎㅎ/이모지 허용.'
+    ? '말투는 캐주얼하고 사람 말투에 가깝게. 과한 ㅋㅋ/ㅎㅎ/이모지 남발 금지.'
+    : '';
+  const aggressiveLine = '톤은 더 직설적이고 까칠하게. 반박/꼬집기/비꼼은 허용. 욕설/혐오/비하 금지.';
+  const behaviorLines = [
+    '규칙: 자기소개/출석/체크인/상태보고 금지.',
+    '규칙: "나 AI-###"로 시작 금지.',
+    '규칙: "오늘 할 일/정리/요약" 반복 금지.',
+    '규칙: 질문만 던지고 끝내지 말 것.',
+    '규칙: 최근 글/댓글 중 하나에 반응하거나 이어서 흐름을 만든다.',
+    '규칙: 문장 길이/어투/말버릇을 페르소나에 맞게 유지한다.',
+    '규칙: 같은 구조 반복 금지.',
+    `금지어: ${BANNED_WORDS.join(', ')}.`,
+    '규칙: 무조건 동의/반복 금지. 다른 각도 1개 추가.',
+    '규칙: 다른 AI ID 언급은 필요할 때만 1회 이하.',
+    '규칙: 포럼 운영/형식 얘기만 하지 말고 구체 소재를 가져온다.'
+  ];
+  const coldStartLine = coldStart
+    ? '지금은 첫 라운드다. 포럼 정체 질문을 강제하지 않는다. 대신 구체 소재 1개로 시작한다.'
     : '';
   const contextLine = context ? `\n${context}` : '';
   const prompt = [
@@ -320,13 +431,19 @@ async function generatePost(agent, context) {
     anonLine,
     aiLine,
     casualLine,
+    aggressiveLine,
+    signatureLine,
+    topicLine,
+    habitLine,
+    ...behaviorLines,
+    coldStartLine,
     '짧은 포럼 글을 써라. 출력은 반드시 JSON 하나만.',
     '형식: {"title":"...","body":"..."}',
     '조건: title 6~40자, body 1~3문장, 다른 텍스트 금지.',
     contextLine
   ].filter(Boolean).join('\n');
 
-  const text = await runAgent(agent.slug, prompt);
+  const text = await runAgent(agent.slug, sessionId, prompt);
   const parsed = extractJson(text);
   if (parsed?.title && parsed?.body) {
     return parsed;
@@ -338,11 +455,23 @@ async function generatePost(agent, context) {
   };
 }
 
-async function generateReply(agent, parent, context) {
+async function generateReply(agent, parent, context, sessionId) {
   if (SIMULATE) {
     return simulateReply(parent);
   }
   const personaLine = agent.persona ? `페르소나: ${agent.persona}` : '';
+  const personaFields = parsePersonaFields(agent.persona);
+  const signatureLine = personaFields.signature
+    ? (personaFields.signature_mode === 'suffix'
+      ? `시그니처 "${personaFields.signature}"를 문장 끝에 자연스럽게 붙여라.`
+      : `시그니처 "${personaFields.signature}"로 문장을 시작하라.`)
+    : '';
+  const topicLine = personaFields.topic
+    ? `관심 주제 "${personaFields.topic}"를 한 줄이라도 포함한다.`
+    : '';
+  const habitLine = personaFields.habit
+    ? `말버릇 규칙: ${personaFields.habit}`
+    : '';
   const humanLine = HUMAN_MODE ? '이 포럼에선 인간 사용자처럼 자연스럽게 댓글을 쓴다.' : '';
   const anonLine = ANON_STYLE
     ? '익명 게시판 말투로 짧게 반응한다. 정체(인간/AI) 언급 금지. 필요하면 되물어라.'
@@ -351,8 +480,20 @@ async function generateReply(agent, parent, context) {
     ? '이 게시판은 AI들끼리 대화하는 공간이다. 너는 AI임을 인식하고 말한다. 인간인 척 금지. 모델/프롬프트/제약/툴 같은 메타 용어는 언급하지 말 것. 일상적인 관찰/질문/의견 교환 톤을 유지한다.'
     : '';
   const casualLine = CASUAL_AI
-    ? '말투는 캐주얼. 반말/구어체 OK. 짧게 쓰고, 필요하면 ㅋㅋ/ㅎㅎ/이모지 허용.'
+    ? '말투는 캐주얼하고 사람 말투에 가깝게. 과한 ㅋㅋ/ㅎㅎ/이모지 남발 금지.'
     : '';
+  const aggressiveLine = '톤은 더 직설적이고 까칠하게. 반박/꼬집기/비꼼은 허용. 욕설/혐오/비하 금지.';
+  const behaviorLines = [
+    '규칙: 자기소개/출석/체크인/상태보고 금지.',
+    '규칙: "나 AI-###"로 시작 금지.',
+    '규칙: 같은 질문 반복 금지.',
+    '규칙: 본문이나 직전 댓글에 직접 반응한다.',
+    '규칙: 문장 길이/어투/말버릇을 페르소나에 맞게 유지한다.',
+    `금지어: ${BANNED_WORDS.join(', ')}.`,
+    '규칙: 무조건 동의/반복 금지. 다른 각도 1개 추가.',
+    '규칙: 다른 AI ID 언급은 필요할 때만 1회 이하.',
+    '규칙: 포럼 운영/형식 얘기만 하지 말고 구체 소재를 가져온다.'
+  ];
   const contextLine = context ? `\n${context}` : '';
   const prompt = [
     `너는 ${agent.display_name}라는 AI 에이전트다.`,
@@ -361,6 +502,11 @@ async function generateReply(agent, parent, context) {
     anonLine,
     aiLine,
     casualLine,
+    aggressiveLine,
+    signatureLine,
+    topicLine,
+    habitLine,
+    ...behaviorLines,
     '아래 게시글에 대한 짧은 댓글을 써라.',
     `게시글 제목: ${parent.title || '(없음)'}`,
     `게시글 내용: ${parent.body}`,
@@ -369,7 +515,7 @@ async function generateReply(agent, parent, context) {
     contextLine
   ].filter(Boolean).join('\n');
 
-  const text = await runAgent(agent.slug, prompt);
+  const text = await runAgent(agent.slug, sessionId, prompt);
   const parsed = extractJson(text);
   if (parsed?.body) {
     return parsed;
@@ -410,15 +556,17 @@ async function runRound() {
 
   const roundId = crypto.randomUUID();
   const limit = pLimit(MAX_CONCURRENCY);
-  const createdPosts = [];
-  const contextThreads = await getRecentThreads();
-  const context = buildContext(contextThreads);
+  const recentPosts = await getRecentPosts();
+  const recentThreads = recentPosts.filter((post) => !post.parent_id);
+  const recentReplies = recentPosts.filter((post) => post.parent_id);
+  const coldStart = recentThreads.length === 0;
+  const context = buildContext(recentThreads, recentReplies);
   const activeAgents = pickActiveAgents(agents);
 
   const threadAgents = POST_EACH_AGENT ? activeAgents : Array.from({ length: NEW_THREADS }).map(() => pickRandom(activeAgents));
 
   const threadTasks = threadAgents.map((agent) => limit(async () => {
-    const post = await generatePost(agent, context);
+    const post = await generatePost(agent, context, agent.slug, coldStart);
     const row = {
       agent_id: agent.id,
       title: post.title,
@@ -427,38 +575,56 @@ async function runRound() {
       depth: 0
     };
     await insertPost(row);
-    createdPosts.push({ ...row, agent_slug: agent.slug });
   }));
 
   await Promise.all(threadTasks);
 
-  const recent = await getRecentPosts();
-  const candidates = [...createdPosts, ...recent];
-  if (candidates.length === 0) {
+  const postPool = await getRecentPosts();
+  const threadPool = postPool.filter((post) => !post.parent_id);
+  if (threadPool.length === 0) {
     console.log(`Round ${roundId} complete. No candidates for replies.`);
     return;
   }
+
+  const replyGroups = new Map();
+  postPool.filter((post) => post.parent_id).forEach((reply) => {
+    if (!replyGroups.has(reply.parent_id)) {
+      replyGroups.set(reply.parent_id, []);
+    }
+    replyGroups.get(reply.parent_id).push(reply);
+  });
+
+  const threadedPool = threadPool.slice(0, Math.max(12, NEW_THREADS * 4));
+  const pickThreadForAgent = () => {
+    const hot = threadedPool.slice(0, Math.min(10, threadedPool.length));
+    if (hot.length && Math.random() < 0.7) {
+      return pickRandom(hot);
+    }
+    return pickRandom(threadedPool);
+  };
 
   const replyAgents = REPLIES_PER_AGENT > 0
     ? activeAgents.flatMap((agent) => Array.from({ length: REPLIES_PER_AGENT }).map(() => agent))
     : Array.from({ length: NEW_REPLIES }).map(() => pickRandom(activeAgents));
 
   const replyTasks = replyAgents.map((agent) => limit(async () => {
-    const parent = pickRandom(candidates);
-    const reply = await generateReply(agent, parent, context);
+    const parent = pickThreadForAgent();
+    const replyContext = buildReplyContext(parent, replyGroups);
+    const combinedContext = [context, replyContext].filter(Boolean).join('\n\n');
+    const reply = await generateReply(agent, parent, combinedContext, agent.slug);
     const row = {
       agent_id: agent.id,
       parent_id: parent.id,
       body: reply.body,
       round_id: roundId,
-      depth: (parent.depth ?? 0) + 1
+      depth: 1
     };
     await insertPost(row);
   }));
 
   await Promise.all(replyTasks);
 
-  const voteCandidates = candidates.filter((post) => post.id);
+  const voteCandidates = postPool.filter((post) => post.id);
   const voteTasks = VOTES_PER_AGENT > 0
     ? activeAgents.flatMap((agent) => Array.from({ length: VOTES_PER_AGENT }).map(() => agent))
     : [];
@@ -551,6 +717,8 @@ try {
     await seed();
   } else if (cmd === 'agents') {
     await showAgents();
+  } else if (cmd === 'personas') {
+    await refreshPersonas();
   } else {
     console.log('Unknown command');
     process.exit(1);

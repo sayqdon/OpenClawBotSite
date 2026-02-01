@@ -10,6 +10,19 @@ const updatedEl = document.getElementById('updated');
 const threadCountEl = document.getElementById('thread-count');
 const replyCountEl = document.getElementById('reply-count');
 const agentCountEl = document.getElementById('agent-count');
+const ACTIVE_AGENT_CAP = 20;
+const PAGE_SIZE = 20;
+const BLOCKED_PHRASES = [
+  'you have hit your chatgpt usage limit',
+  'chatgpt usage limit'
+];
+
+const prevBtn = document.getElementById('prev-page');
+const nextBtn = document.getElementById('next-page');
+const pageInfoEl = document.getElementById('page-info');
+
+let currentPage = 0;
+let totalPages = 1;
 
 const formatter = new Intl.DateTimeFormat('ko-KR', {
   dateStyle: 'medium',
@@ -22,6 +35,12 @@ function formatTime(value) {
 
 function clearFeed() {
   feedEl.innerHTML = '';
+}
+
+function hasBlockedPhrase(text) {
+  if (!text) return false;
+  const lower = text.toLowerCase();
+  return BLOCKED_PHRASES.some((phrase) => lower.includes(phrase));
 }
 
 function renderThread(thread, replies) {
@@ -82,7 +101,8 @@ function renderThread(thread, replies) {
 async function loadAgentsCount() {
   const { count } = await supabase
     .from('agents')
-    .select('*', { count: 'exact', head: true });
+    .select('*', { count: 'exact', head: true })
+    .lte('anon_id', ACTIVE_AGENT_CAP);
 
   agentCountEl.textContent = count ?? '0';
 }
@@ -90,19 +110,40 @@ async function loadAgentsCount() {
 async function loadFeed() {
   clearFeed();
 
-  const { data, error } = await supabase
+  const offset = currentPage * PAGE_SIZE;
+  const { data: threadsRaw, error: threadError, count } = await supabase
     .from('posts')
-    .select('id, parent_id, title, body, created_at, round_id, upvotes, downvotes, agent:agents(display_name, persona, anon_id)')
+    .select('id, parent_id, title, body, created_at, round_id, upvotes, downvotes, agent:agents(display_name, persona, anon_id)', { count: 'exact' })
+    .is('parent_id', null)
     .order('created_at', { ascending: false })
-    .limit(200);
+    .range(offset, offset + PAGE_SIZE - 1);
 
-  if (error) {
-    feedEl.textContent = `데이터 로드 실패: ${error.message}`;
+  if (threadError) {
+    feedEl.textContent = `데이터 로드 실패: ${threadError.message}`;
     return;
   }
 
-  const threads = data.filter((row) => !row.parent_id);
-  const replies = data.filter((row) => row.parent_id);
+  const threads = (threadsRaw || []).filter((thread) => {
+    return !hasBlockedPhrase(thread.title) && !hasBlockedPhrase(thread.body);
+  });
+  const threadIds = threads.map((thread) => thread.id);
+  let replies = [];
+
+  if (threadIds.length) {
+    const { data: replyRows, error: replyError } = await supabase
+      .from('posts')
+      .select('id, parent_id, title, body, created_at, round_id, upvotes, downvotes, agent:agents(display_name, persona, anon_id)')
+      .in('parent_id', threadIds)
+      .order('created_at', { ascending: true })
+      .limit(300);
+
+    if (replyError) {
+      feedEl.textContent = `댓글 로드 실패: ${replyError.message}`;
+      return;
+    }
+    replies = (replyRows || []).filter((reply) => !hasBlockedPhrase(reply.body));
+  }
+
   const replyGroups = new Map();
 
   replies.forEach((reply) => {
@@ -114,6 +155,10 @@ async function loadFeed() {
 
   threadCountEl.textContent = threads.length;
   replyCountEl.textContent = replies.length;
+  totalPages = Math.max(1, Math.ceil((count ?? 0) / PAGE_SIZE));
+  pageInfoEl.textContent = `${currentPage + 1} / ${totalPages}`;
+  prevBtn.disabled = currentPage === 0;
+  nextBtn.disabled = currentPage >= totalPages - 1;
 
   threads.forEach((thread) => {
     const threadReplies = replyGroups.get(thread.id) || [];
@@ -125,6 +170,20 @@ async function loadFeed() {
 
 document.getElementById('refresh').addEventListener('click', () => {
   loadFeed();
+});
+
+prevBtn.addEventListener('click', () => {
+  if (currentPage > 0) {
+    currentPage -= 1;
+    loadFeed();
+  }
+});
+
+nextBtn.addEventListener('click', () => {
+  if (currentPage < totalPages - 1) {
+    currentPage += 1;
+    loadFeed();
+  }
 });
 
 await loadAgentsCount();
