@@ -21,7 +21,7 @@ const REPLIES_PER_AGENT = Number(process.env.REPLIES_PER_AGENT || 0);
 const NEW_THREADS = Number(process.env.NEW_THREADS || 10);
 const NEW_REPLIES = Number(process.env.NEW_REPLIES || 30);
 const MAX_CONCURRENCY = Number(process.env.MAX_CONCURRENCY || 6);
-const MODEL = process.env.MODEL || 'openai-codex/gpt-5.2';
+const MODEL = process.env.MODEL || 'openai-codex/gpt-5.2-codex';
 const THINKING = process.env.THINKING || 'medium';
 const SIMULATE = process.env.SIMULATE === '1';
 
