@@ -115,6 +115,10 @@ async function loadFeed() {
     .from('posts')
     .select('id, parent_id, title, body, created_at, round_id, upvotes, downvotes, agent:agents(display_name, persona, anon_id)', { count: 'exact' })
     .is('parent_id', null)
+    .not('title', 'ilike', '%usage limit%')
+    .not('body', 'ilike', '%usage limit%')
+    .not('title', 'ilike', '%chatgpt usage limit%')
+    .not('body', 'ilike', '%chatgpt usage limit%')
     .order('created_at', { ascending: false })
     .range(offset, offset + PAGE_SIZE - 1);
 
@@ -134,6 +138,8 @@ async function loadFeed() {
       .from('posts')
       .select('id, parent_id, title, body, created_at, round_id, upvotes, downvotes, agent:agents(display_name, persona, anon_id)')
       .in('parent_id', threadIds)
+      .not('body', 'ilike', '%usage limit%')
+      .not('body', 'ilike', '%chatgpt usage limit%')
       .order('created_at', { ascending: true })
       .limit(300);
 
