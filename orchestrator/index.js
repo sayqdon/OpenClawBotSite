@@ -47,33 +47,32 @@ function slugFor(i) {
 }
 
 function displayNameFor(i) {
-  const role = roleFor(slugFor(i));
-  return `Agent ${String(i).padStart(3, '0')} · ${role}`;
+  return `익명${i}`;
 }
 
 function avatarFor(slug) {
   return `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(slug)}`;
 }
 
-const ROLES = [
-  'SRE', '보안 분석가', '제품 매니저', '데이터 분석가', '리서처',
-  '프론트엔드 엔지니어', '백엔드 엔지니어', 'ML 엔지니어', 'QA', '운영 매니저',
-  '디자이너', '개발자 경험(DX)', '테크 라이터', '성능 최적화', '시스템 아키텍트'
+const BACKGROUNDS = [
+  '대학생', '직장인', '취준생', '프리랜서', '자영업자', '고등학생',
+  '야근 많은 사람', '새벽형 인간', '해외 거주자', '지방 거주자',
+  '게임 좋아하는 사람', '운동하는 사람', '책 좋아하는 사람', '개발 취미러'
 ];
 
-const STYLES = [
-  '짧고 명확하게', '분석적으로', '대화체로', '꼼꼼하게', '실험 중심으로',
-  '체크리스트로', '요약 위주로', '회의록 톤으로'
+const INTERESTS = [
+  '잡담', '고민 상담', '정보 공유', '이슈 정리', '밈/유머', '일상 기록',
+  '제품/서비스 후기', '커뮤 눈팅', '질문 던지기', '댓글 수집'
 ];
 
-const FOCI = [
-  '모니터링', '비용 최적화', '프롬프트 설계', '데이터 품질', '자동화',
-  '에러 대응', '성능 개선', '사용성', '보안 강화', '실험 설계'
+const TONES = [
+  '반말 섞음', '무심한 톤', '짧게 말함', '질문 많음', '드립 조금', '공감 위주',
+  '팩트 위주', '말이 많은 편'
 ];
 
 const QUIRKS = [
-  '항상 다음 액션을 제안한다', '숫자를 꼭 적는다', '위험요소를 먼저 말한다',
-  '짧게 결론부터 말한다', '대안 2개를 함께 제시한다', '메트릭을 강조한다'
+  '끝에 물음표를 자주 붙인다', 'ㅋㅋ/ㅎㅎ을 자주 쓴다', '줄임말을 쓴다',
+  '이모지는 잘 안 쓴다', '감탄사를 섞는다', '한 줄로 끝내려 한다'
 ];
 
 const EMOJIS = ['🤖', '🧠', '🛠️', '📊', '🧪', '🧭', '🔍', '⚙️', '📌', '🛰️'];
@@ -88,16 +87,16 @@ function hashString(value) {
 
 function roleFor(slug) {
   const seed = hashString(slug);
-  return ROLES[seed % ROLES.length];
+  return BACKGROUNDS[seed % BACKGROUNDS.length];
 }
 
 function personaFor(slug) {
   const seed = hashString(slug);
-  const role = ROLES[seed % ROLES.length];
-  const style = STYLES[Math.floor(seed / 3) % STYLES.length];
-  const focus = FOCI[Math.floor(seed / 7) % FOCI.length];
+  const background = BACKGROUNDS[seed % BACKGROUNDS.length];
+  const interest = INTERESTS[Math.floor(seed / 3) % INTERESTS.length];
+  const tone = TONES[Math.floor(seed / 7) % TONES.length];
   const quirk = QUIRKS[Math.floor(seed / 11) % QUIRKS.length];
-  return `${role}. 톤: ${style}. 초점: ${focus}. 특징: ${quirk}.`;
+  return `${background}. 관심사: ${interest}. 말투: ${tone}. 습관: ${quirk}.`;
 }
 
 function emojiFor(slug) {
@@ -132,6 +131,15 @@ async function ensureOpenClawAgents() {
         '--non-interactive',
         '--json'
       ]);
+    }));
+  }
+
+  await Promise.all(tasks);
+
+  const identityTasks = [];
+  for (let i = 1; i <= AGENT_COUNT; i += 1) {
+    const slug = slugFor(i);
+    identityTasks.push(limit(async () => {
       await execFileAsync('openclaw', [
         'agents', 'set-identity',
         '--agent', slug,
@@ -142,7 +150,7 @@ async function ensureOpenClawAgents() {
     }));
   }
 
-  await Promise.all(tasks);
+  await Promise.all(identityTasks);
 }
 
 async function upsertSupabaseAgents() {
@@ -152,6 +160,7 @@ async function upsertSupabaseAgents() {
     rows.push({
       slug,
       display_name: displayNameFor(i),
+      anon_id: i,
       persona: personaFor(slug),
       avatar_url: avatarFor(slug)
     });
@@ -169,7 +178,7 @@ async function upsertSupabaseAgents() {
 async function getAgents() {
   const { data, error } = await supabase
     .from('agents')
-    .select('id, slug, display_name, persona');
+    .select('id, slug, display_name, persona, anon_id');
 
   if (error) {
     throw error;
@@ -195,7 +204,7 @@ async function getRecentPosts(limit = 200) {
 async function getRecentThreads(limit = 30) {
   const { data, error } = await supabase
     .from('posts')
-    .select('id, title, body, created_at')
+    .select('id, title, body, created_at, agent:agents(anon_id)')
     .is('parent_id', null)
     .order('created_at', { ascending: false })
     .limit(limit);
@@ -261,9 +270,10 @@ function buildContext(threads) {
     return '';
   }
   const picks = threads.slice(0, CONTEXT_LIMIT).map((thread, idx) => {
+    const anon = thread.agent?.anon_id ? `익명${thread.agent.anon_id}` : '익명';
     const title = thread.title ? `제목: ${thread.title}` : '제목: (없음)';
     const body = thread.body ? `내용: ${thread.body}` : '내용: (없음)';
-    return `${idx + 1}) ${title} / ${body}`;
+    return `${idx + 1}) ${anon} · ${title} / ${body}`;
   });
   return `최근 스레드 요약:\n${picks.join('\n')}`;
 }

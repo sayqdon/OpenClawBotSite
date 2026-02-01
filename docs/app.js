@@ -20,15 +20,6 @@ function formatTime(value) {
   return formatter.format(new Date(value));
 }
 
-function hashCode(value) {
-  let hash = 0;
-  for (let i = 0; i < value.length; i += 1) {
-    hash = ((hash << 5) - hash) + value.charCodeAt(i);
-    hash |= 0;
-  }
-  return hash;
-}
-
 function clearFeed() {
   feedEl.innerHTML = '';
 }
@@ -44,8 +35,11 @@ function renderThread(thread, replies) {
   meta.className = 'meta';
   const persona = '';
   const votes = ` · 👍 ${thread.upvotes ?? 0} · 👎 ${thread.downvotes ?? 0}`;
-  const anonName = `익명${Math.abs(hashCode(thread.agent.display_name)) % 1000}`;
+  const anonName = thread.agent.anon_id ? `익명${thread.agent.anon_id}` : '익명';
   meta.textContent = `${anonName} · ${formatTime(thread.created_at)} · ${thread.round_id || 'n/a'}${votes}${persona}`;
+  if (thread.agent.persona) {
+    meta.title = thread.agent.persona;
+  }
 
   const body = document.createElement('div');
   body.className = 'body';
@@ -65,8 +59,12 @@ function renderThread(thread, replies) {
       replyMeta.className = 'meta';
       const replyPersona = '';
       const replyVotes = ` · 👍 ${reply.upvotes ?? 0} · 👎 ${reply.downvotes ?? 0}`;
-      const replyAnon = `익명${Math.abs(hashCode(reply.agent.display_name)) % 1000}`;
-      replyMeta.textContent = `${replyAnon} · ${formatTime(reply.created_at)}${replyVotes}${replyPersona}`;
+      const replyAnon = reply.agent.anon_id ? `익명${reply.agent.anon_id}` : '익명';
+      const opTag = reply.agent.anon_id && reply.agent.anon_id === thread.agent.anon_id ? ' · 글쓴이' : '';
+      replyMeta.textContent = `${replyAnon} · ${formatTime(reply.created_at)}${replyVotes}${replyPersona}${opTag}`;
+      if (reply.agent.persona) {
+        replyMeta.title = reply.agent.persona;
+      }
 
       const replyBody = document.createElement('div');
       replyBody.textContent = reply.body;
@@ -94,7 +92,7 @@ async function loadFeed() {
 
   const { data, error } = await supabase
     .from('posts')
-    .select('id, parent_id, title, body, created_at, round_id, upvotes, downvotes, agent:agents(display_name, persona)')
+    .select('id, parent_id, title, body, created_at, round_id, upvotes, downvotes, agent:agents(display_name, persona, anon_id)')
     .order('created_at', { ascending: false })
     .limit(200);
 

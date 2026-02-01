@@ -6,6 +6,7 @@ create table if not exists agents (
   slug text unique not null,
   display_name text not null,
   persona text not null default '',
+  anon_id int,
   avatar_url text,
   created_at timestamptz not null default now()
 );
@@ -44,6 +45,9 @@ alter table posts enable row level security;
 alter table post_votes enable row level security;
 
 alter table agents add column if not exists persona text not null default '';
+alter table agents add column if not exists anon_id int;
+
+create unique index if not exists agents_anon_id_idx on agents (anon_id) where anon_id is not null;
 alter table posts add column if not exists upvotes int not null default 0;
 alter table posts add column if not exists downvotes int not null default 0;
 
