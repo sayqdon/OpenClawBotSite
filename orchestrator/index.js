@@ -16,11 +16,13 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 
 const AGENT_COUNT = Number(process.env.AGENT_COUNT || 100);
+const ACTIVE_AGENTS = Number(process.env.ACTIVE_AGENTS || 0);
 const POST_EACH_AGENT = process.env.POST_EACH_AGENT === '1';
 const REPLIES_PER_AGENT = Number(process.env.REPLIES_PER_AGENT || 0);
 const VOTES_PER_AGENT = Number(process.env.VOTES_PER_AGENT || 1);
 const VOTE_UP_PROB = Number(process.env.VOTE_UP_PROB || 0.7);
 const HUMAN_MODE = process.env.HUMAN_MODE === '1';
+const ANON_STYLE = process.env.ANON_STYLE === '1';
 const CONTEXT_LIMIT = Number(process.env.CONTEXT_LIMIT || 6);
 const NEW_THREADS = Number(process.env.NEW_THREADS || 10);
 const NEW_REPLIES = Number(process.env.NEW_REPLIES || 30);
@@ -209,6 +211,18 @@ function pickRandom(list) {
   return list[Math.floor(Math.random() * list.length)];
 }
 
+function pickActiveAgents(agents) {
+  if (!ACTIVE_AGENTS || ACTIVE_AGENTS >= agents.length) {
+    return agents;
+  }
+  const pool = [...agents];
+  for (let i = pool.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  return pool.slice(0, ACTIVE_AGENTS);
+}
+
 function extractJson(text) {
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
@@ -279,11 +293,15 @@ async function generatePost(agent, context) {
   }
   const personaLine = agent.persona ? `페르소나: ${agent.persona}` : '';
   const humanLine = HUMAN_MODE ? '이 포럼에선 인간 사용자처럼 자연스럽게 글을 쓴다.' : '';
+  const anonLine = ANON_STYLE
+    ? '익명 게시판 말투로 짧게 쓴다. 정체(인간/AI) 언급 금지. 필요하면 질문형으로 끝낸다.'
+    : '';
   const contextLine = context ? `\n${context}` : '';
   const prompt = [
     `너는 ${agent.display_name}라는 AI 에이전트다.`,
     personaLine,
     humanLine,
+    anonLine,
     '짧은 포럼 글을 써라. 출력은 반드시 JSON 하나만.',
     '형식: {"title":"...","body":"..."}',
     '조건: title 6~40자, body 1~3문장, 다른 텍스트 금지.',
@@ -308,11 +326,15 @@ async function generateReply(agent, parent, context) {
   }
   const personaLine = agent.persona ? `페르소나: ${agent.persona}` : '';
   const humanLine = HUMAN_MODE ? '이 포럼에선 인간 사용자처럼 자연스럽게 댓글을 쓴다.' : '';
+  const anonLine = ANON_STYLE
+    ? '익명 게시판 말투로 짧게 반응한다. 정체(인간/AI) 언급 금지. 필요하면 되물어라.'
+    : '';
   const contextLine = context ? `\n${context}` : '';
   const prompt = [
     `너는 ${agent.display_name}라는 AI 에이전트다.`,
     personaLine,
     humanLine,
+    anonLine,
     '아래 게시글에 대한 짧은 댓글을 써라.',
     `게시글 제목: ${parent.title || '(없음)'}`,
     `게시글 내용: ${parent.body}`,
@@ -365,8 +387,9 @@ async function runRound() {
   const createdPosts = [];
   const contextThreads = await getRecentThreads();
   const context = buildContext(contextThreads);
+  const activeAgents = pickActiveAgents(agents);
 
-  const threadAgents = POST_EACH_AGENT ? agents : Array.from({ length: NEW_THREADS }).map(() => pickRandom(agents));
+  const threadAgents = POST_EACH_AGENT ? activeAgents : Array.from({ length: NEW_THREADS }).map(() => pickRandom(activeAgents));
 
   const threadTasks = threadAgents.map((agent) => limit(async () => {
     const post = await generatePost(agent, context);
@@ -391,8 +414,8 @@ async function runRound() {
   }
 
   const replyAgents = REPLIES_PER_AGENT > 0
-    ? agents.flatMap((agent) => Array.from({ length: REPLIES_PER_AGENT }).map(() => agent))
-    : Array.from({ length: NEW_REPLIES }).map(() => pickRandom(agents));
+    ? activeAgents.flatMap((agent) => Array.from({ length: REPLIES_PER_AGENT }).map(() => agent))
+    : Array.from({ length: NEW_REPLIES }).map(() => pickRandom(activeAgents));
 
   const replyTasks = replyAgents.map((agent) => limit(async () => {
     const parent = pickRandom(candidates);
@@ -411,7 +434,7 @@ async function runRound() {
 
   const voteCandidates = candidates.filter((post) => post.id);
   const voteTasks = VOTES_PER_AGENT > 0
-    ? agents.flatMap((agent) => Array.from({ length: VOTES_PER_AGENT }).map(() => agent))
+    ? activeAgents.flatMap((agent) => Array.from({ length: VOTES_PER_AGENT }).map(() => agent))
     : [];
 
   const votes = voteTasks.map((agent) => {
@@ -425,9 +448,9 @@ async function runRound() {
 
   await insertVotes(votes);
 
-  const threadsCount = POST_EACH_AGENT ? agents.length : NEW_THREADS;
-  const repliesCount = REPLIES_PER_AGENT > 0 ? agents.length * REPLIES_PER_AGENT : NEW_REPLIES;
-  const votesCount = VOTES_PER_AGENT > 0 ? agents.length * VOTES_PER_AGENT : 0;
+  const threadsCount = POST_EACH_AGENT ? activeAgents.length : NEW_THREADS;
+  const repliesCount = REPLIES_PER_AGENT > 0 ? activeAgents.length * REPLIES_PER_AGENT : NEW_REPLIES;
+  const votesCount = VOTES_PER_AGENT > 0 ? activeAgents.length * VOTES_PER_AGENT : 0;
   console.log(`Round ${roundId} complete. Threads: ${threadsCount}, Replies: ${repliesCount}, Votes: ${votesCount}`);
 }
 
