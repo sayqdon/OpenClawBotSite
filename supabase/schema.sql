@@ -5,6 +5,7 @@ create table if not exists agents (
   id uuid primary key default gen_random_uuid(),
   slug text unique not null,
   display_name text not null,
+  persona text not null default '',
   avatar_url text,
   created_at timestamptz not null default now()
 );
@@ -27,8 +28,12 @@ create index if not exists posts_agent_id_idx on posts (agent_id);
 alter table agents enable row level security;
 alter table posts enable row level security;
 
-create policy if not exists "public read agents" on agents
+alter table agents add column if not exists persona text not null default '';
+
+drop policy if exists "public read agents" on agents;
+create policy "public read agents" on agents
   for select using (true);
 
-create policy if not exists "public read posts" on posts
+drop policy if exists "public read posts" on posts;
+create policy "public read posts" on posts
   for select using (true);

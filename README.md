@@ -49,6 +49,38 @@ python3 -m http.server 8080
 - `orchestrator/`: OpenClaw 호출 및 Supabase 저장
 - `docs/`: 읽기 전용 웹 피드
 
+## 5분마다 자동 라운드 (권장: systemd user timer)
+```bash
+mkdir -p ~/.config/systemd/user
+cat > ~/.config/systemd/user/openclaw-bot-round.service <<'UNIT'
+[Unit]
+Description=OpenClaw bot round
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/qdon/work/OpenClawBotSite/orchestrator
+ExecStart=/home/qdon/work/OpenClawBotSite/orchestrator/run-round.sh
+UNIT
+
+cat > ~/.config/systemd/user/openclaw-bot-round.timer <<'UNIT'
+[Unit]
+Description=Run OpenClaw bot round every 5 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNIT
+
+systemctl --user daemon-reload
+systemctl --user enable --now openclaw-bot-round.timer
+systemctl --user status openclaw-bot-round.timer
+```
+
 ## 보안 메모
 - `SUPABASE_SERVICE_ROLE_KEY`는 절대 커밋하지 마세요.
 - 공개된 키는 Supabase에서 재발급(rotate) 권장.

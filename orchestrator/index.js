@@ -15,10 +15,12 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 
-const AGENT_COUNT = Number(process.env.AGENT_COUNT || 120);
-const NEW_THREADS = Number(process.env.NEW_THREADS || 3);
-const NEW_REPLIES = Number(process.env.NEW_REPLIES || 12);
-const MAX_CONCURRENCY = Number(process.env.MAX_CONCURRENCY || 4);
+const AGENT_COUNT = Number(process.env.AGENT_COUNT || 100);
+const POST_EACH_AGENT = process.env.POST_EACH_AGENT === '1';
+const REPLIES_PER_AGENT = Number(process.env.REPLIES_PER_AGENT || 0);
+const NEW_THREADS = Number(process.env.NEW_THREADS || 10);
+const NEW_REPLIES = Number(process.env.NEW_REPLIES || 30);
+const MAX_CONCURRENCY = Number(process.env.MAX_CONCURRENCY || 6);
 const MODEL = process.env.MODEL || 'openai-codex/gpt-5.2';
 const THINKING = process.env.THINKING || 'medium';
 const SIMULATE = process.env.SIMULATE === '1';
@@ -39,11 +41,62 @@ function slugFor(i) {
 }
 
 function displayNameFor(i) {
-  return `Agent ${String(i).padStart(3, '0')}`;
+  const role = roleFor(slugFor(i));
+  return `Agent ${String(i).padStart(3, '0')} · ${role}`;
 }
 
 function avatarFor(slug) {
   return `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(slug)}`;
+}
+
+const ROLES = [
+  'SRE', '보안 분석가', '제품 매니저', '데이터 분석가', '리서처',
+  '프론트엔드 엔지니어', '백엔드 엔지니어', 'ML 엔지니어', 'QA', '운영 매니저',
+  '디자이너', '개발자 경험(DX)', '테크 라이터', '성능 최적화', '시스템 아키텍트'
+];
+
+const STYLES = [
+  '짧고 명확하게', '분석적으로', '대화체로', '꼼꼼하게', '실험 중심으로',
+  '체크리스트로', '요약 위주로', '회의록 톤으로'
+];
+
+const FOCI = [
+  '모니터링', '비용 최적화', '프롬프트 설계', '데이터 품질', '자동화',
+  '에러 대응', '성능 개선', '사용성', '보안 강화', '실험 설계'
+];
+
+const QUIRKS = [
+  '항상 다음 액션을 제안한다', '숫자를 꼭 적는다', '위험요소를 먼저 말한다',
+  '짧게 결론부터 말한다', '대안 2개를 함께 제시한다', '메트릭을 강조한다'
+];
+
+const EMOJIS = ['🤖', '🧠', '🛠️', '📊', '🧪', '🧭', '🔍', '⚙️', '📌', '🛰️'];
+
+function hashString(value) {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = (hash * 31 + value.charCodeAt(i)) % 1_000_000;
+  }
+  return hash;
+}
+
+function roleFor(slug) {
+  const seed = hashString(slug);
+  return ROLES[seed % ROLES.length];
+}
+
+function personaFor(slug) {
+  const seed = hashString(slug);
+  const role = ROLES[seed % ROLES.length];
+  const style = STYLES[Math.floor(seed / 3) % STYLES.length];
+  const focus = FOCI[Math.floor(seed / 7) % FOCI.length];
+  const quirk = QUIRKS[Math.floor(seed / 11) % QUIRKS.length];
+  return `${role}. 톤: ${style}. 초점: ${focus}. 특징: ${quirk}.`;
+}
+
+function emojiFor(slug) {
+  const seed = hashString(slug);
+  return EMOJIS[seed % EMOJIS.length];
 }
 
 async function listOpenClawAgents() {
@@ -77,7 +130,8 @@ async function ensureOpenClawAgents() {
         'agents', 'set-identity',
         '--agent', slug,
         '--name', displayNameFor(i),
-        '--emoji', '🤖'
+        '--theme', roleFor(slug),
+        '--emoji', emojiFor(slug)
       ]);
     }));
   }
@@ -92,6 +146,7 @@ async function upsertSupabaseAgents() {
     rows.push({
       slug,
       display_name: displayNameFor(i),
+      persona: personaFor(slug),
       avatar_url: avatarFor(slug)
     });
   }
@@ -108,7 +163,7 @@ async function upsertSupabaseAgents() {
 async function getAgents() {
   const { data, error } = await supabase
     .from('agents')
-    .select('id, slug, display_name');
+    .select('id, slug, display_name, persona');
 
   if (error) {
     throw error;
@@ -191,8 +246,10 @@ async function generatePost(agent) {
   if (SIMULATE) {
     return simulatePost(agent);
   }
+  const personaLine = agent.persona ? `페르소나: ${agent.persona}` : '';
   const prompt = [
     `너는 ${agent.display_name}라는 AI 에이전트다.`,
+    personaLine,
     '짧은 포럼 글을 써라. 출력은 반드시 JSON 하나만.',
     '형식: {"title":"...","body":"..."}',
     '조건: title 6~40자, body 1~3문장, 다른 텍스트 금지.'
@@ -214,8 +271,10 @@ async function generateReply(agent, parent) {
   if (SIMULATE) {
     return simulateReply(parent);
   }
+  const personaLine = agent.persona ? `페르소나: ${agent.persona}` : '';
   const prompt = [
     `너는 ${agent.display_name}라는 AI 에이전트다.`,
+    personaLine,
     '아래 게시글에 대한 짧은 댓글을 써라.',
     `게시글 제목: ${parent.title || '(없음)'}`,
     `게시글 내용: ${parent.body}`,
@@ -250,8 +309,9 @@ async function runRound() {
   const limit = pLimit(MAX_CONCURRENCY);
   const createdPosts = [];
 
-  const threadTasks = Array.from({ length: NEW_THREADS }).map(() => limit(async () => {
-    const agent = pickRandom(agents);
+  const threadAgents = POST_EACH_AGENT ? agents : Array.from({ length: NEW_THREADS }).map(() => pickRandom(agents));
+
+  const threadTasks = threadAgents.map((agent) => limit(async () => {
     const post = await generatePost(agent);
     const row = {
       agent_id: agent.id,
@@ -268,9 +328,16 @@ async function runRound() {
 
   const recent = await getRecentPosts();
   const candidates = [...createdPosts, ...recent];
+  if (candidates.length === 0) {
+    console.log(`Round ${roundId} complete. No candidates for replies.`);
+    return;
+  }
 
-  const replyTasks = Array.from({ length: NEW_REPLIES }).map(() => limit(async () => {
-    const agent = pickRandom(agents);
+  const replyAgents = REPLIES_PER_AGENT > 0
+    ? agents.flatMap((agent) => Array.from({ length: REPLIES_PER_AGENT }).map(() => agent))
+    : Array.from({ length: NEW_REPLIES }).map(() => pickRandom(agents));
+
+  const replyTasks = replyAgents.map((agent) => limit(async () => {
     const parent = pickRandom(candidates);
     const reply = await generateReply(agent, parent);
     const row = {
@@ -285,7 +352,9 @@ async function runRound() {
 
   await Promise.all(replyTasks);
 
-  console.log(`Round ${roundId} complete. Threads: ${NEW_THREADS}, Replies: ${NEW_REPLIES}`);
+  const threadsCount = POST_EACH_AGENT ? agents.length : NEW_THREADS;
+  const repliesCount = REPLIES_PER_AGENT > 0 ? agents.length * REPLIES_PER_AGENT : NEW_REPLIES;
+  console.log(`Round ${roundId} complete. Threads: ${threadsCount}, Replies: ${repliesCount}`);
 }
 
 async function seed() {
