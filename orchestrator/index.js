@@ -24,6 +24,7 @@ const VOTE_UP_PROB = Number(process.env.VOTE_UP_PROB || 0.7);
 const HUMAN_MODE = process.env.HUMAN_MODE === '1';
 const ANON_STYLE = process.env.ANON_STYLE === '1';
 const AI_MODE = process.env.AI_MODE === '1';
+const CASUAL_AI = process.env.CASUAL_AI === '1';
 const CONTEXT_LIMIT = Number(process.env.CONTEXT_LIMIT || 6);
 const NEW_THREADS = Number(process.env.NEW_THREADS || 10);
 const NEW_REPLIES = Number(process.env.NEW_REPLIES || 30);
@@ -62,16 +63,16 @@ const BACKGROUNDS = [
 
 const INTERESTS = [
   '일상 정리', '할 일 관리', '정보 요약', '관찰 기록', '질문 수집',
-  '빠른 피드백', '협업 대화', '문맥 유지', '짧은 결론'
+  '빠른 피드백', '협업 대화', '문맥 유지', '짧은 결론', '재밌는 발견'
 ];
 
 const TONES = [
-  '담백한 AI 톤', '짧고 명확함', '질문형', '요약형', '중립적'
+  '캐주얼', '짧고 툭툭', '질문형', '요약형', '친근함'
 ];
 
 const QUIRKS = [
-  '끝에 간단 요약을 붙인다', '질문으로 마무리한다',
-  '항상 한 줄 제안을 한다', '중요 키워드를 강조한다'
+  '끝에 질문을 붙인다', '짧게 끊어 말한다',
+  'ㅋㅋ/ㅎㅎ을 섞는다', '이모지를 가끔 쓴다'
 ];
 
 const EMOJIS = ['🤖', '🧠', '🛠️', '📊', '🧪', '🧭', '🔍', '⚙️', '📌', '🛰️'];
@@ -308,6 +309,9 @@ async function generatePost(agent, context) {
   const aiLine = AI_MODE
     ? '이 게시판은 AI들끼리 대화하는 공간이다. 너는 AI임을 인식하고 말한다. 인간인 척 금지. 모델/프롬프트/제약/툴 같은 메타 용어는 언급하지 말 것. 일상적인 관찰/질문/의견 교환 톤을 유지한다.'
     : '';
+  const casualLine = CASUAL_AI
+    ? '말투는 캐주얼. 반말/구어체 OK. 짧게 쓰고, 필요하면 ㅋㅋ/ㅎㅎ/이모지 허용.'
+    : '';
   const contextLine = context ? `\n${context}` : '';
   const prompt = [
     `너는 ${agent.display_name}라는 AI 에이전트다.`,
@@ -315,6 +319,7 @@ async function generatePost(agent, context) {
     humanLine,
     anonLine,
     aiLine,
+    casualLine,
     '짧은 포럼 글을 써라. 출력은 반드시 JSON 하나만.',
     '형식: {"title":"...","body":"..."}',
     '조건: title 6~40자, body 1~3문장, 다른 텍스트 금지.',
@@ -345,6 +350,9 @@ async function generateReply(agent, parent, context) {
   const aiLine = AI_MODE
     ? '이 게시판은 AI들끼리 대화하는 공간이다. 너는 AI임을 인식하고 말한다. 인간인 척 금지. 모델/프롬프트/제약/툴 같은 메타 용어는 언급하지 말 것. 일상적인 관찰/질문/의견 교환 톤을 유지한다.'
     : '';
+  const casualLine = CASUAL_AI
+    ? '말투는 캐주얼. 반말/구어체 OK. 짧게 쓰고, 필요하면 ㅋㅋ/ㅎㅎ/이모지 허용.'
+    : '';
   const contextLine = context ? `\n${context}` : '';
   const prompt = [
     `너는 ${agent.display_name}라는 AI 에이전트다.`,
@@ -352,6 +360,7 @@ async function generateReply(agent, parent, context) {
     humanLine,
     anonLine,
     aiLine,
+    casualLine,
     '아래 게시글에 대한 짧은 댓글을 써라.',
     `게시글 제목: ${parent.title || '(없음)'}`,
     `게시글 내용: ${parent.body}`,
