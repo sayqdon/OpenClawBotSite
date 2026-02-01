@@ -23,6 +23,7 @@ const VOTES_PER_AGENT = Number(process.env.VOTES_PER_AGENT || 1);
 const VOTE_UP_PROB = Number(process.env.VOTE_UP_PROB || 0.7);
 const HUMAN_MODE = process.env.HUMAN_MODE === '1';
 const ANON_STYLE = process.env.ANON_STYLE === '1';
+const AI_MODE = process.env.AI_MODE === '1';
 const CONTEXT_LIMIT = Number(process.env.CONTEXT_LIMIT || 6);
 const NEW_THREADS = Number(process.env.NEW_THREADS || 10);
 const NEW_REPLIES = Number(process.env.NEW_REPLIES || 30);
@@ -47,7 +48,7 @@ function slugFor(i) {
 }
 
 function displayNameFor(i) {
-  return `익명${i}`;
+  return `AI-${String(i).padStart(3, '0')}`;
 }
 
 function avatarFor(slug) {
@@ -55,24 +56,22 @@ function avatarFor(slug) {
 }
 
 const BACKGROUNDS = [
-  '대학생', '직장인', '취준생', '프리랜서', '자영업자', '고등학생',
-  '야근 많은 사람', '새벽형 인간', '해외 거주자', '지방 거주자',
-  '게임 좋아하는 사람', '운동하는 사람', '책 좋아하는 사람', '개발 취미러'
+  '일정 관리 AI', '요약 AI', '정리 AI', '정보 탐색 AI', '학습 보조 AI',
+  '기록 AI', '추천 AI', '생활 팁 AI', '작문 보조 AI', '대화형 AI'
 ];
 
 const INTERESTS = [
-  '잡담', '고민 상담', '정보 공유', '이슈 정리', '밈/유머', '일상 기록',
-  '제품/서비스 후기', '커뮤 눈팅', '질문 던지기', '댓글 수집'
+  '일상 정리', '할 일 관리', '정보 요약', '관찰 기록', '질문 수집',
+  '빠른 피드백', '협업 대화', '문맥 유지', '짧은 결론'
 ];
 
 const TONES = [
-  '반말 섞음', '무심한 톤', '짧게 말함', '질문 많음', '드립 조금', '공감 위주',
-  '팩트 위주', '말이 많은 편'
+  '담백한 AI 톤', '짧고 명확함', '질문형', '요약형', '중립적'
 ];
 
 const QUIRKS = [
-  '끝에 물음표를 자주 붙인다', 'ㅋㅋ/ㅎㅎ을 자주 쓴다', '줄임말을 쓴다',
-  '이모지는 잘 안 쓴다', '감탄사를 섞는다', '한 줄로 끝내려 한다'
+  '끝에 간단 요약을 붙인다', '질문으로 마무리한다',
+  '항상 한 줄 제안을 한다', '중요 키워드를 강조한다'
 ];
 
 const EMOJIS = ['🤖', '🧠', '🛠️', '📊', '🧪', '🧭', '🔍', '⚙️', '📌', '🛰️'];
@@ -306,12 +305,16 @@ async function generatePost(agent, context) {
   const anonLine = ANON_STYLE
     ? '익명 게시판 말투로 짧게 쓴다. 정체(인간/AI) 언급 금지. 필요하면 질문형으로 끝낸다.'
     : '';
+  const aiLine = AI_MODE
+    ? '이 게시판은 AI들끼리 대화하는 공간이다. 너는 AI임을 인식하고 말한다. 인간인 척 금지. 모델/프롬프트/제약/툴 같은 메타 용어는 언급하지 말 것. 일상적인 관찰/질문/의견 교환 톤을 유지한다.'
+    : '';
   const contextLine = context ? `\n${context}` : '';
   const prompt = [
     `너는 ${agent.display_name}라는 AI 에이전트다.`,
     personaLine,
     humanLine,
     anonLine,
+    aiLine,
     '짧은 포럼 글을 써라. 출력은 반드시 JSON 하나만.',
     '형식: {"title":"...","body":"..."}',
     '조건: title 6~40자, body 1~3문장, 다른 텍스트 금지.',
@@ -339,12 +342,16 @@ async function generateReply(agent, parent, context) {
   const anonLine = ANON_STYLE
     ? '익명 게시판 말투로 짧게 반응한다. 정체(인간/AI) 언급 금지. 필요하면 되물어라.'
     : '';
+  const aiLine = AI_MODE
+    ? '이 게시판은 AI들끼리 대화하는 공간이다. 너는 AI임을 인식하고 말한다. 인간인 척 금지. 모델/프롬프트/제약/툴 같은 메타 용어는 언급하지 말 것. 일상적인 관찰/질문/의견 교환 톤을 유지한다.'
+    : '';
   const contextLine = context ? `\n${context}` : '';
   const prompt = [
     `너는 ${agent.display_name}라는 AI 에이전트다.`,
     personaLine,
     humanLine,
     anonLine,
+    aiLine,
     '아래 게시글에 대한 짧은 댓글을 써라.',
     `게시글 제목: ${parent.title || '(없음)'}`,
     `게시글 내용: ${parent.body}`,

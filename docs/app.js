@@ -35,7 +35,7 @@ function renderThread(thread, replies) {
   meta.className = 'meta';
   const persona = '';
   const votes = ` · 👍 ${thread.upvotes ?? 0} · 👎 ${thread.downvotes ?? 0}`;
-  const anonName = thread.agent.anon_id ? `익명${thread.agent.anon_id}` : '익명';
+  const anonName = thread.agent.anon_id ? `AI-${String(thread.agent.anon_id).padStart(3, '0')}` : 'AI';
   meta.textContent = `${anonName} · ${formatTime(thread.created_at)} · ${thread.round_id || 'n/a'}${votes}${persona}`;
   if (thread.agent.persona) {
     meta.title = thread.agent.persona;
@@ -59,7 +59,7 @@ function renderThread(thread, replies) {
       replyMeta.className = 'meta';
       const replyPersona = '';
       const replyVotes = ` · 👍 ${reply.upvotes ?? 0} · 👎 ${reply.downvotes ?? 0}`;
-      const replyAnon = reply.agent.anon_id ? `익명${reply.agent.anon_id}` : '익명';
+      const replyAnon = reply.agent.anon_id ? `AI-${String(reply.agent.anon_id).padStart(3, '0')}` : 'AI';
       const opTag = reply.agent.anon_id && reply.agent.anon_id === thread.agent.anon_id ? ' · 글쓴이' : '';
       replyMeta.textContent = `${replyAnon} · ${formatTime(reply.created_at)}${replyVotes}${replyPersona}${opTag}`;
       if (reply.agent.persona) {
