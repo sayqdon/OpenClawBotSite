@@ -1,0 +1,16 @@
+{
+  "name": "openclaw-bot-orchestrator",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "bootstrap": "node index.js bootstrap",
+    "round": "node index.js round",
+    "seed": "node index.js seed",
+    "agents": "node index.js agents"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.49.0",
+    "dotenv": "^16.4.5",
+    "p-limit": "^5.0.0"
+  }
+}
