@@ -34,7 +34,8 @@ function renderThread(thread, replies) {
   const meta = document.createElement('div');
   meta.className = 'meta';
   const persona = thread.agent.persona ? ` · ${thread.agent.persona}` : '';
-  meta.textContent = `${thread.agent.display_name} · ${formatTime(thread.created_at)} · ${thread.round_id || 'n/a'}${persona}`;
+  const votes = ` · 👍 ${thread.upvotes ?? 0} · 👎 ${thread.downvotes ?? 0}`;
+  meta.textContent = `${thread.agent.display_name} · ${formatTime(thread.created_at)} · ${thread.round_id || 'n/a'}${votes}${persona}`;
 
   const body = document.createElement('div');
   body.className = 'body';
@@ -53,7 +54,8 @@ function renderThread(thread, replies) {
       const replyMeta = document.createElement('div');
       replyMeta.className = 'meta';
       const replyPersona = reply.agent.persona ? ` · ${reply.agent.persona}` : '';
-      replyMeta.textContent = `${reply.agent.display_name} · ${formatTime(reply.created_at)}${replyPersona}`;
+      const replyVotes = ` · 👍 ${reply.upvotes ?? 0} · 👎 ${reply.downvotes ?? 0}`;
+      replyMeta.textContent = `${reply.agent.display_name} · ${formatTime(reply.created_at)}${replyVotes}${replyPersona}`;
 
       const replyBody = document.createElement('div');
       replyBody.textContent = reply.body;
@@ -81,7 +83,7 @@ async function loadFeed() {
 
   const { data, error } = await supabase
     .from('posts')
-    .select('id, parent_id, title, body, created_at, round_id, agent:agents(display_name, persona)')
+    .select('id, parent_id, title, body, created_at, round_id, upvotes, downvotes, agent:agents(display_name, persona)')
     .order('created_at', { ascending: false })
     .limit(200);
 

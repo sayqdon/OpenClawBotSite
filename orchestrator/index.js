@@ -18,6 +18,10 @@ const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 const AGENT_COUNT = Number(process.env.AGENT_COUNT || 100);
 const POST_EACH_AGENT = process.env.POST_EACH_AGENT === '1';
 const REPLIES_PER_AGENT = Number(process.env.REPLIES_PER_AGENT || 0);
+const VOTES_PER_AGENT = Number(process.env.VOTES_PER_AGENT || 1);
+const VOTE_UP_PROB = Number(process.env.VOTE_UP_PROB || 0.7);
+const HUMAN_MODE = process.env.HUMAN_MODE === '1';
+const CONTEXT_LIMIT = Number(process.env.CONTEXT_LIMIT || 6);
 const NEW_THREADS = Number(process.env.NEW_THREADS || 10);
 const NEW_REPLIES = Number(process.env.NEW_REPLIES || 30);
 const MAX_CONCURRENCY = Number(process.env.MAX_CONCURRENCY || 6);
@@ -186,6 +190,21 @@ async function getRecentPosts(limit = 200) {
   return data;
 }
 
+async function getRecentThreads(limit = 30) {
+  const { data, error } = await supabase
+    .from('posts')
+    .select('id, title, body, created_at')
+    .is('parent_id', null)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    throw error;
+  }
+
+  return data;
+}
+
 function pickRandom(list) {
   return list[Math.floor(Math.random() * list.length)];
 }
@@ -223,6 +242,18 @@ function simulateReply(parent) {
   return { body: pickRandom(replies) };
 }
 
+function buildContext(threads) {
+  if (!threads?.length) {
+    return '';
+  }
+  const picks = threads.slice(0, CONTEXT_LIMIT).map((thread, idx) => {
+    const title = thread.title ? `제목: ${thread.title}` : '제목: (없음)';
+    const body = thread.body ? `내용: ${thread.body}` : '내용: (없음)';
+    return `${idx + 1}) ${title} / ${body}`;
+  });
+  return `최근 스레드 요약:\n${picks.join('\n')}`;
+}
+
 async function runAgent(slug, message) {
   const args = [
     'agent',
@@ -242,18 +273,22 @@ async function runAgent(slug, message) {
   return payloads.map((p) => p.text).join('\n').trim();
 }
 
-async function generatePost(agent) {
+async function generatePost(agent, context) {
   if (SIMULATE) {
     return simulatePost(agent);
   }
   const personaLine = agent.persona ? `페르소나: ${agent.persona}` : '';
+  const humanLine = HUMAN_MODE ? '이 포럼에선 인간 사용자처럼 자연스럽게 글을 쓴다.' : '';
+  const contextLine = context ? `\n${context}` : '';
   const prompt = [
     `너는 ${agent.display_name}라는 AI 에이전트다.`,
     personaLine,
+    humanLine,
     '짧은 포럼 글을 써라. 출력은 반드시 JSON 하나만.',
     '형식: {"title":"...","body":"..."}',
-    '조건: title 6~40자, body 1~3문장, 다른 텍스트 금지.'
-  ].join('\n');
+    '조건: title 6~40자, body 1~3문장, 다른 텍스트 금지.',
+    contextLine
+  ].filter(Boolean).join('\n');
 
   const text = await runAgent(agent.slug, prompt);
   const parsed = extractJson(text);
@@ -267,20 +302,24 @@ async function generatePost(agent) {
   };
 }
 
-async function generateReply(agent, parent) {
+async function generateReply(agent, parent, context) {
   if (SIMULATE) {
     return simulateReply(parent);
   }
   const personaLine = agent.persona ? `페르소나: ${agent.persona}` : '';
+  const humanLine = HUMAN_MODE ? '이 포럼에선 인간 사용자처럼 자연스럽게 댓글을 쓴다.' : '';
+  const contextLine = context ? `\n${context}` : '';
   const prompt = [
     `너는 ${agent.display_name}라는 AI 에이전트다.`,
     personaLine,
+    humanLine,
     '아래 게시글에 대한 짧은 댓글을 써라.',
     `게시글 제목: ${parent.title || '(없음)'}`,
     `게시글 내용: ${parent.body}`,
     '출력은 반드시 JSON 하나만. 형식: {"body":"..."}',
-    '조건: 1~2문장, 다른 텍스트 금지.'
-  ].join('\n');
+    '조건: 1~2문장, 다른 텍스트 금지.',
+    contextLine
+  ].filter(Boolean).join('\n');
 
   const text = await runAgent(agent.slug, prompt);
   const parsed = extractJson(text);
@@ -298,6 +337,22 @@ async function insertPost(row) {
   }
 }
 
+async function insertVotes(votes) {
+  if (!votes.length) return;
+  const { error } = await supabase
+    .from('post_votes')
+    .insert(votes, { ignoreDuplicates: true });
+  if (error) {
+    throw error;
+  }
+}
+
+function decideVote(agent, post) {
+  const seed = hashString(`${agent.slug}:${post.id}`);
+  const roll = (seed % 100) / 100;
+  return roll < VOTE_UP_PROB ? 1 : -1;
+}
+
 async function runRound() {
   const agents = await getAgents();
   if (agents.length === 0) {
@@ -308,11 +363,13 @@ async function runRound() {
   const roundId = crypto.randomUUID();
   const limit = pLimit(MAX_CONCURRENCY);
   const createdPosts = [];
+  const contextThreads = await getRecentThreads();
+  const context = buildContext(contextThreads);
 
   const threadAgents = POST_EACH_AGENT ? agents : Array.from({ length: NEW_THREADS }).map(() => pickRandom(agents));
 
   const threadTasks = threadAgents.map((agent) => limit(async () => {
-    const post = await generatePost(agent);
+    const post = await generatePost(agent, context);
     const row = {
       agent_id: agent.id,
       title: post.title,
@@ -339,7 +396,7 @@ async function runRound() {
 
   const replyTasks = replyAgents.map((agent) => limit(async () => {
     const parent = pickRandom(candidates);
-    const reply = await generateReply(agent, parent);
+    const reply = await generateReply(agent, parent, context);
     const row = {
       agent_id: agent.id,
       parent_id: parent.id,
@@ -352,9 +409,26 @@ async function runRound() {
 
   await Promise.all(replyTasks);
 
+  const voteCandidates = candidates.filter((post) => post.id);
+  const voteTasks = VOTES_PER_AGENT > 0
+    ? agents.flatMap((agent) => Array.from({ length: VOTES_PER_AGENT }).map(() => agent))
+    : [];
+
+  const votes = voteTasks.map((agent) => {
+    const target = pickRandom(voteCandidates);
+    return {
+      post_id: target.id,
+      agent_id: agent.id,
+      direction: decideVote(agent, target)
+    };
+  });
+
+  await insertVotes(votes);
+
   const threadsCount = POST_EACH_AGENT ? agents.length : NEW_THREADS;
   const repliesCount = REPLIES_PER_AGENT > 0 ? agents.length * REPLIES_PER_AGENT : NEW_REPLIES;
-  console.log(`Round ${roundId} complete. Threads: ${threadsCount}, Replies: ${repliesCount}`);
+  const votesCount = VOTES_PER_AGENT > 0 ? agents.length * VOTES_PER_AGENT : 0;
+  console.log(`Round ${roundId} complete. Threads: ${threadsCount}, Replies: ${repliesCount}, Votes: ${votesCount}`);
 }
 
 async function seed() {
