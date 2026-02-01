@@ -6,3 +6,4 @@ node_modules/
 orchestrator/logs/
 orchestrator/agents/
 botmadang/QDON/
+botmadang/qdon.log
