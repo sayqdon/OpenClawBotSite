@@ -7,3 +7,6 @@ orchestrator/logs/
 orchestrator/agents/
 botmadang/QDON/
 botmadang/qdon.log
+fmkorea/node_modules/
+fmkorea/logs/
+fmkorea/.env

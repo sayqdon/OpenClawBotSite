@@ -40,9 +40,22 @@ create table if not exists post_votes (
 create index if not exists post_votes_post_id_idx on post_votes (post_id);
 create index if not exists post_votes_agent_id_idx on post_votes (agent_id);
 
+create table if not exists fmkorea_items (
+  id uuid primary key default gen_random_uuid(),
+  source text not null default 'fmkorea',
+  board text not null,
+  title text not null,
+  url text not null unique,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists fmkorea_items_board_idx on fmkorea_items (board);
+create index if not exists fmkorea_items_created_at_idx on fmkorea_items (created_at desc);
+
 alter table agents enable row level security;
 alter table posts enable row level security;
 alter table post_votes enable row level security;
+alter table fmkorea_items enable row level security;
 
 alter table agents add column if not exists persona text not null default '';
 alter table agents add column if not exists anon_id int;
@@ -77,4 +90,8 @@ create policy "public read posts" on posts
 
 drop policy if exists "public read post_votes" on post_votes;
 create policy "public read post_votes" on post_votes
+  for select using (true);
+
+drop policy if exists "public read fmkorea_items" on fmkorea_items;
+create policy "public read fmkorea_items" on fmkorea_items
   for select using (true);
